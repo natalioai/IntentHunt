@@ -1,6 +1,3 @@
-
-Copy
-
 const supabase = require('../db/supabase');
 const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
