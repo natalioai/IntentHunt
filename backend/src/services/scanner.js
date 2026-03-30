@@ -2,7 +2,7 @@ const supabase = require('../db/supabase');
 const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
 
-const SCAN_INTERVAL = 60 * 1000; // 60 seconds
+const SCAN_INTERVAL = 60 * 1000;
 
 function startScanner() {
   console.log('Scanner service initialized. Scanning every 60 seconds.');
@@ -41,11 +41,6 @@ async function scanForClient(client) {
     return;
   }
 
-  if (!client.reddit_access_token) {
-    console.log(`Skipping client ${client.id}: no Reddit access token.`);
-    return;
-  }
-
   console.log(`Scanning for client ${client.id} with ${client.keywords.length} keywords...`);
 
   for (const keyword of client.keywords) {
@@ -75,7 +70,6 @@ async function scanForClient(client) {
       for (const post of posts) {
         const postData = post.data;
 
-        // Check if lead already exists
         const { data: existing } = await supabase
           .from('leads')
           .select('id')
@@ -84,17 +78,15 @@ async function scanForClient(client) {
           .single();
 
         if (existing) {
-          continue; // Already tracked
+          continue;
         }
 
-        // Classify the post
         const classification = await classifyPost(
           postData.title,
           postData.selftext,
           client.keywords
         );
 
-        // Insert lead
         const { data: newLead, error: insertError } = await supabase
           .from('leads')
           .insert({
@@ -114,7 +106,6 @@ async function scanForClient(client) {
           .single();
 
         if (insertError) {
-          // Likely a duplicate constraint violation, skip silently
           if (!insertError.message.includes('duplicate')) {
             console.error('Error inserting lead:', insertError.message);
           }
@@ -123,7 +114,6 @@ async function scanForClient(client) {
 
         console.log(`New lead: "${postData.title}" (score: ${classification.intent_score}, type: ${classification.audience_type})`);
 
-        // Auto-DM if conditions are met
         if (
           classification.audience_type !== 'Noise' &&
           classification.intent_score >= (client.auto_dm_threshold || 70) &&
