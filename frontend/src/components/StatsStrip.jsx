@@ -3,7 +3,7 @@ import { getStats } from '../lib/api';
 import { Users, UserCheck, Briefcase, Send, Flame } from 'lucide-react';
 
 const STAT_CONFIG = [
-  { key: 'total_leads', label: 'Total Leads', icon: Users, bg: 'bg-blue-50', text: 'text-blue-600', iconBg: 'bg-blue-100' },
+  { key: 'total', label: 'Total Leads', icon: Users, bg: 'bg-blue-50', text: 'text-blue-600', iconBg: 'bg-blue-100' },
   { key: 'b2c_count', label: 'B2C Count', icon: UserCheck, bg: 'bg-green-50', text: 'text-green-600', iconBg: 'bg-green-100' },
   { key: 'b2b_count', label: 'B2B Count', icon: Briefcase, bg: 'bg-purple-50', text: 'text-purple-600', iconBg: 'bg-purple-100' },
   { key: 'dms_sent', label: 'DMs Sent', icon: Send, bg: 'bg-orange-50', text: 'text-orange-600', iconBg: 'bg-orange-100' },

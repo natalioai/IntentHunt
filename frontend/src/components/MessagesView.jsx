@@ -56,8 +56,8 @@ export default function MessagesView({ clientId }) {
           <AlertCircle className="w-5 h-5 text-brand shrink-0" />
           <div className="flex-1">
             <p className="text-sm text-gray-700">
-              <span className="font-semibold">{rateInfo.used ?? rateInfo.dms_sent_this_hour ?? 0}</span>
-              /{rateInfo.limit ?? rateInfo.hourly_limit ?? 10} DMs sent this hour
+              <span className="font-semibold">{rateInfo.sent_last_hour ?? 0}</span>
+              /{rateInfo.limit ?? 10} DMs sent this hour
             </p>
           </div>
         </div>
@@ -97,10 +97,10 @@ export default function MessagesView({ clientId }) {
                 {messages.map((msg, idx) => (
                   <tr key={msg.id || idx} className="hover:bg-gray-50 transition">
                     <td className="px-6 py-3 text-gray-900 font-medium">
-                      {msg.recipient || msg.reddit_username || '-'}
+                      {msg.reddit_author || msg.recipient || '-'}
                     </td>
                     <td className="px-6 py-3 text-gray-600 truncate max-w-xs">
-                      {msg.subject || msg.dm_subject || '-'}
+                      {msg.message_subject || msg.subject || '-'}
                     </td>
                     <td className="px-6 py-3">{statusBadge(msg.status)}</td>
                     <td className="px-6 py-3 text-gray-400 flex items-center gap-1">

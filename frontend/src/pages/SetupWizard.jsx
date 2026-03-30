@@ -54,17 +54,10 @@ export default function SetupWizard() {
 
   const removeKeyword = (kw) => setKeywords(keywords.filter((k) => k !== kw));
 
-  const handleConnectReddit = async () => {
-    try {
-      const data = await getRedditConnectURL(clientId);
-      const url = data.url || data.redirect_url;
-      if (url) {
-        window.open(url, '_blank');
-        setRedditConnected(true);
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to connect Reddit');
-    }
+  const handleConnectReddit = () => {
+    const url = getRedditConnectURL(clientId);
+    window.open(url, '_blank');
+    setRedditConnected(true);
   };
 
   const handleFinish = async () => {

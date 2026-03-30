@@ -23,9 +23,9 @@ export default function AutoDMControl({ clientId }) {
         if (cancelled) return;
         const c = clientData.client || clientData;
         setEnabled(!!c.auto_dm_enabled);
-        setThreshold(c.dm_score_threshold ?? 70);
-        setRateUsed(rateData.used ?? rateData.dms_sent_this_hour ?? 0);
-        setRateLimit(rateData.limit ?? rateData.hourly_limit ?? 10);
+        setThreshold(c.auto_dm_threshold ?? 70);
+        setRateUsed(rateData.sent_last_hour ?? rateData.used ?? 0);
+        setRateLimit(rateData.limit ?? 10);
       } catch (err) {
         console.error('Failed to load DM settings:', err);
       } finally {

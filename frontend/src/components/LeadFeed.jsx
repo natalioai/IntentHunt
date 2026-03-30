@@ -61,8 +61,8 @@ export default function LeadFeed({ clientId }) {
     if (!clientId) return;
     try {
       const data = await getLeads(clientId, {
-        audience: filters.audience || undefined,
-        minScore: filters.minScore || undefined,
+        audience_type: filters.audience || undefined,
+        min_score: filters.minScore || undefined,
         urgency: filters.urgency || undefined,
       });
       setLeads(Array.isArray(data) ? data : data.leads || []);

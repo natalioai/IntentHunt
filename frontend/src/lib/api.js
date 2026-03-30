@@ -29,42 +29,39 @@ export async function register(email, password, businessName) {
 }
 
 export async function getLeads(clientId, filters = {}) {
-  const params = new URLSearchParams();
-  if (filters.audience) params.set('audience', filters.audience);
-  if (filters.minScore) params.set('min_score', filters.minScore);
+  const params = new URLSearchParams({ client_id: clientId });
+  if (filters.audience_type) params.set('audience_type', filters.audience_type);
+  if (filters.min_score) params.set('min_score', filters.min_score);
   if (filters.urgency) params.set('urgency', filters.urgency);
-  const qs = params.toString();
-  const res = await request(`/api/leads/${clientId}${qs ? `?${qs}` : ''}`);
+  const res = await request(`/api/leads?${params.toString()}`);
   return res.json();
 }
 
 export async function getStats(clientId) {
-  const res = await request(`/api/stats/${clientId}`);
+  const res = await request(`/api/leads/stats?client_id=${clientId}`);
   return res.json();
 }
 
 export async function exportCSV(clientId) {
-  const res = await fetch(`${API_URL}/api/leads/${clientId}/export`, {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const res = await fetch(`${API_URL}/api/leads/export?client_id=${clientId}`);
   if (!res.ok) throw new Error('Export failed');
   return res.blob();
 }
 
 export async function getMessages(clientId) {
-  const res = await request(`/api/messages/${clientId}`);
+  const res = await request(`/api/messages?client_id=${clientId}`);
   return res.json();
 }
 
 export async function getRateStatus(clientId) {
-  const res = await request(`/api/rate-status/${clientId}`);
+  const res = await request(`/api/messages/rate-status?client_id=${clientId}`);
   return res.json();
 }
 
 export async function updateSettings(clientId, settings) {
-  const res = await request(`/api/clients/${clientId}/settings`, {
+  const res = await request('/api/scanner/settings', {
     method: 'PUT',
-    body: JSON.stringify(settings),
+    body: JSON.stringify({ client_id: clientId, ...settings }),
   });
   return res.json();
 }
@@ -72,13 +69,16 @@ export async function updateSettings(clientId, settings) {
 export async function updateAutoDM(clientId, enabled, threshold) {
   const res = await request(`/api/clients/${clientId}/auto-dm`, {
     method: 'PUT',
-    body: JSON.stringify({ auto_dm_enabled: enabled, dm_score_threshold: threshold }),
+    body: JSON.stringify({ auto_dm_enabled: enabled, auto_dm_threshold: threshold }),
   });
   return res.json();
 }
 
 export async function scanNow(clientId) {
-  const res = await request(`/api/scan/${clientId}`, { method: 'POST' });
+  const res = await request('/api/scanner/scan-now', {
+    method: 'POST',
+    body: JSON.stringify({ client_id: clientId }),
+  });
   return res.json();
 }
 
@@ -88,14 +88,14 @@ export async function getClient(clientId) {
 }
 
 export async function getTemplates(clientId) {
-  const res = await request(`/api/templates/${clientId}`);
+  const res = await request(`/api/templates?client_id=${clientId}`);
   return res.json();
 }
 
 export async function createTemplate(clientId, template) {
-  const res = await request(`/api/templates/${clientId}`, {
+  const res = await request('/api/templates', {
     method: 'POST',
-    body: JSON.stringify(template),
+    body: JSON.stringify({ client_id: clientId, ...template }),
   });
   return res.json();
 }
@@ -113,7 +113,6 @@ export async function deleteTemplate(id) {
   return res.json();
 }
 
-export async function getRedditConnectURL(clientId) {
-  const res = await request(`/api/reddit/connect/${clientId}`);
-  return res.json();
+export function getRedditConnectURL(clientId) {
+  return `${API_URL}/api/auth/reddit/connect?client_id=${clientId}`;
 }
