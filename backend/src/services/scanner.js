@@ -3,72 +3,36 @@ const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
  
 const SCAN_INTERVAL = 60 * 1000;
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '884af8f64d4b45c28716ef4d13252c3d';
  
-async function searchRedditRSS(keyword, city) {
+async function searchReddit(keyword, city) {
   const searchQuery = city ? `${keyword} ${city}` : keyword;
   const encoded = encodeURIComponent(searchQuery);
-  
-  // Try multiple Reddit endpoints to avoid blocks
-  const urls = [
-    `https://www.reddit.com/search.json?q=${encoded}&sort=new&limit=25&t=week`,
-    `https://old.reddit.com/search.json?q=${encoded}&sort=new&limit=25&t=week`,
-  ];
+  const redditUrl = `https://www.reddit.com/search.json?q=${encoded}&sort=new&limit=25&t=week`;
+  const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(redditUrl)}`;
  
-  for (const url of urls) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': process.env.REDDIT_USER_AGENT || 'Mozilla/5.0 (compatible; IntentHunt/1.0)',
-          'Accept': 'application/json',
-        },
-      });
- 
-      if (response.ok) {
-        const data = await response.json();
-        const posts = data?.data?.children || [];
-        if (posts.length > 0) {
-          console.log(`Found ${posts.length} posts for "${keyword}" via ${url}`);
-          return posts.map(p => p.data);
-        }
-      } else {
-        console.log(`${url} returned ${response.status}, trying next...`);
-      }
-    } catch (err) {
-      console.log(`Fetch error for ${url}: ${err.message}`);
-    }
-  }
- 
-  // Fallback: use Pushshift (alternative Reddit archive)
   try {
-    const psUrl = `https://api.pushshift.io/reddit/search/submission/?q=${encoded}&sort=desc&size=25`;
-    const psResponse = await fetch(psUrl, {
-      headers: { 'User-Agent': 'IntentHunt/1.0' }
-    });
-    if (psResponse.ok) {
-      const psData = await psResponse.json();
-      const posts = psData?.data || [];
-      console.log(`Pushshift found ${posts.length} posts for "${keyword}"`);
-      return posts.map(p => ({
-        id: p.id,
-        title: p.title,
-        selftext: p.selftext || '',
-        author: p.author,
-        subreddit: p.subreddit,
-        permalink: `/r/${p.subreddit}/comments/${p.id}/`,
-        score: p.score || 0,
-      }));
-    }
-  } catch (err) {
-    console.log(`Pushshift error: ${err.message}`);
-  }
+    console.log(`Searching Reddit for: "${searchQuery}"`);
+    const response = await fetch(scraperUrl);
  
-  console.log(`No results found for "${keyword}" from any source.`);
-  return [];
+    if (!response.ok) {
+      console.error(`ScraperAPI returned ${response.status} for "${keyword}"`);
+      return [];
+    }
+ 
+    const data = await response.json();
+    const posts = data?.data?.children || [];
+    console.log(`Found ${posts.length} posts for "${keyword}"`);
+    return posts.map(p => p.data);
+  } catch (err) {
+    console.error(`Search error for "${keyword}": ${err.message}`);
+    return [];
+  }
 }
  
 async function scanForClient(client) {
   const keywords = client.target_keywords || client.keywords || [];
-  
+ 
   if (!keywords.length) {
     console.log(`Skipping client ${client.id}: no keywords configured.`);
     return;
@@ -78,10 +42,9 @@ async function scanForClient(client) {
  
   for (const keyword of keywords) {
     try {
-      const posts = await searchRedditRSS(keyword, client.city);
+      const posts = await searchReddit(keyword, client.city);
  
       for (const postData of posts) {
-        // Check if lead already exists
         const { data: existing } = await supabase
           .from('leads')
           .select('id')
@@ -91,7 +54,6 @@ async function scanForClient(client) {
  
         if (existing) continue;
  
-        // Classify the post
         const classification = await classifyPost(
           postData.title,
           postData.selftext,
@@ -102,7 +64,6 @@ async function scanForClient(client) {
           continue;
         }
  
-        // Insert lead
         const { data: newLead, error: insertError } = await supabase
           .from('leads')
           .insert({
@@ -127,15 +88,14 @@ async function scanForClient(client) {
           .single();
  
         if (insertError) {
-          if (!insertError.message?.includes('duplicate') && !insertError.code === '23505') {
+          if (!insertError.message?.includes('duplicate') && insertError.code !== '23505') {
             console.error('Error inserting lead:', insertError.message);
           }
           continue;
         }
  
-        console.log(`✅ New lead: "${postData.title?.slice(0, 60)}" (score: ${classification.intent_score}, type: ${classification.audience_type})`);
+        console.log(`New lead: "${postData.title?.slice(0, 60)}" (score: ${classification.intent_score}, type: ${classification.audience_type})`);
  
-        // Auto-DM if enabled
         if (
           classification.audience_type !== 'Noise' &&
           classification.intent_score >= (client.auto_dm_threshold || 70) &&
@@ -146,11 +106,10 @@ async function scanForClient(client) {
         }
       }
  
-      // Rate limit between keywords
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
  
     } catch (err) {
-      console.error(`Error scanning keyword "${keyword}":`, err.message);
+      console.error(`Error scanning keyword "${keyword}": ${err.message}`);
     }
   }
 }
