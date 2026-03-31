@@ -2,7 +2,7 @@ const supabase = require('../db/supabase');
 const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
  
-const SCAN_INTERVAL = 61 * 1000;
+const SCAN_INTERVAL = 60 * 1000;
 const APIFY_TOKEN = process.env.APIFY_TOKEN || 'apify_api_dcvgMZzi1AfrP3GSaaWoaslS2IytIs3Iugzc';
  
 async function searchRedditApify(keyword, city) {
@@ -10,68 +10,33 @@ async function searchRedditApify(keyword, city) {
   console.log(`Searching Reddit via Apify for: "${searchQuery}"`);
  
   try {
-    // Start the Apify actor run
     const runResponse = await fetch(
-      `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/runs?token=${APIFY_TOKEN}`,
+      `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=60`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          searchQuery: searchQuery,
-          maxItems: 25,
+          searches: [searchQuery],
+          maxItems: 20,
           sort: 'new',
           time: 'week',
+          searchPosts: true,
+          searchComments: false,
+          searchCommunities: false,
+          searchUsers: false,
         }),
       }
     );
  
     if (!runResponse.ok) {
-      console.error(`Apify run failed: ${runResponse.status}`);
+      const errText = await runResponse.text();
+      console.error(`Apify run failed: ${runResponse.status} - ${errText.slice(0, 200)}`);
       return [];
     }
  
-    const runData = await runResponse.json();
-    const runId = runData?.data?.id;
-    if (!runId) {
-      console.error('No run ID returned from Apify');
-      return [];
-    }
- 
-    console.log(`Apify run started: ${runId}`);
- 
-    // Wait for run to complete (poll every 3 seconds, max 60 seconds)
-    let status = 'RUNNING';
-    let attempts = 0;
-    while (status === 'RUNNING' && attempts < 20) {
-      await new Promise(r => setTimeout(r, 3000));
-      const statusResponse = await fetch(
-        `https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`
-      );
-      const statusData = await statusResponse.json();
-      status = statusData?.data?.status;
-      attempts++;
-      console.log(`Apify run status: ${status} (attempt ${attempts})`);
-    }
- 
-    if (status !== 'SUCCEEDED') {
-      console.error(`Apify run did not succeed: ${status}`);
-      return [];
-    }
- 
-    // Get results
-    const datasetId = runData?.data?.defaultDatasetId;
-    const resultsResponse = await fetch(
-      `https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}`
-    );
- 
-    if (!resultsResponse.ok) {
-      console.error(`Failed to fetch Apify results: ${resultsResponse.status}`);
-      return [];
-    }
- 
-    const results = await resultsResponse.json();
+    const results = await runResponse.json();
     console.log(`Apify returned ${results.length} posts for "${searchQuery}"`);
-    return results;
+    return Array.isArray(results) ? results : [];
  
   } catch (err) {
     console.error(`Apify search error: ${err.message}`);
@@ -94,14 +59,13 @@ async function scanForClient(client) {
       const posts = await searchRedditApify(keyword, client.city);
  
       for (const post of posts) {
-        // Normalize Apify result fields
         const postData = {
-          id: post.id || post.postId || Math.random().toString(36).substr(2, 9),
+          id: post.id || post.postId || post.dataId || Math.random().toString(36).substr(2, 9),
           title: post.title || post.postTitle || '',
-          selftext: post.text || post.body || post.selftext || '',
-          author: post.username || post.author || 'unknown',
-          subreddit: post.community || post.subreddit || 'unknown',
-          url: post.url || post.postUrl || '',
+          selftext: post.text || post.body || post.selftext || post.description || '',
+          author: post.username || post.author || post.authorName || 'unknown',
+          subreddit: post.community || post.subreddit || post.subredditName || 'unknown',
+          url: post.url || post.postUrl || post.link || '',
         };
  
         if (!postData.title) continue;
