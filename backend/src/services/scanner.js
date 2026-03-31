@@ -3,166 +3,167 @@ const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
  
 const SCAN_INTERVAL = 60 * 1000;
-const APIFY_TOKEN = process.env.APIFY_TOKEN || 'apify_api_dcvgMZzi1AfrP3GSaaWoaslS2IytIs3Iugzc';
-const APIFY_TASK_ID = 'definable_option~intenthunt-scanner';
  
-async function searchRedditApify(keyword, city) {
+async function searchRedditViaApify(keyword, city) {
   const searchQuery = city ? `${keyword} ${city}` : keyword;
+  const token = process.env.APIFY_TOKEN;
+ 
   console.log(`Searching Reddit via Apify for: "${searchQuery}"`);
  
-  try {
-    const runResponse = await fetch(
-      `https://api.apify.com/v2/actor-tasks/${APIFY_TASK_ID}/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=120`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          startUrls: [searchQuery],
-          sortOrder: 'new',
-          maxPosts: 20,
-          maxComments: 0,
-          timeFilter: 'week',
-          requestDelay: 1,
-          proxyConfiguration: { useApifyProxy: true }
-        }),
-      }
-    );
- 
-    if (!runResponse.ok) {
-      const errText = await runResponse.text();
-      console.error(`Apify task failed: ${runResponse.status} - ${errText.slice(0, 300)}`);
-      return [];
+  // Step 1: Start the run
+  const runRes = await fetch(
+    `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/runs?token=${token}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startUrls: [searchQuery],
+        sortOrder: 'new',
+        maxPosts: 15,
+      }),
     }
+  );
  
-    const results = await runResponse.json();
-    const posts = Array.isArray(results) ? results : [];
-    console.log(`Apify returned ${posts.length} posts for "${searchQuery}"`);
-    return posts;
- 
-  } catch (err) {
-    console.error(`Apify search error: ${err.message}`);
+  if (!runRes.ok) {
+    console.error(`Apify start run failed: ${runRes.status}`);
     return [];
   }
+ 
+  const runData = await runRes.json();
+  const runId = runData?.data?.id;
+  const datasetId = runData?.data?.defaultDatasetId;
+ 
+  if (!runId) {
+    console.error('No run ID returned from Apify');
+    return [];
+  }
+ 
+  console.log(`Apify run started: ${runId}`);
+ 
+  // Step 2: Poll for completion (max 90 seconds)
+  for (let i = 0; i < 18; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+ 
+    const statusRes = await fetch(
+      `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/runs/${runId}?token=${token}`
+    );
+    const statusData = await statusRes.json();
+    const status = statusData?.data?.status;
+ 
+    console.log(`Apify run ${runId} status: ${status}`);
+ 
+    if (status === 'SUCCEEDED') {
+      // Step 3: Get results
+      const resultsRes = await fetch(
+        `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&limit=15`
+      );
+      const results = await resultsRes.json();
+      console.log(`Apify returned ${results.length} posts for "${searchQuery}"`);
+      return results;
+    }
+ 
+    if (status === 'FAILED' || status === 'TIMED-OUT' || status === 'ABORTED') {
+      console.error(`Apify run ${runId} ended with status: ${status}`);
+      return [];
+    }
+  }
+ 
+  console.error(`Apify run ${runId} timed out after 90 seconds`);
+  return [];
+}
+ 
+function startScanner() {
+  console.log('Scanner service initialized. Scanning every 60 seconds.');
+ 
+  setInterval(async () => {
+    try {
+      console.log('Running scheduled scan...');
+      const { data: clients, error } = await supabase
+        .from('clients')
+        .select('*');
+ 
+      if (error) {
+        console.error('Error fetching clients for scan:', error.message);
+        return;
+      }
+ 
+      if (!clients || clients.length === 0) {
+        console.log('No clients to scan for.');
+        return;
+      }
+ 
+      for (const client of clients) {
+        await scanForClient(client);
+      }
+ 
+      console.log('Scheduled scan complete.');
+    } catch (error) {
+      console.error('Scanner error:', error.message);
+    }
+  }, SCAN_INTERVAL);
 }
  
 async function scanForClient(client) {
-  const keywords = client.target_keywords || client.keywords || [];
- 
-  if (!keywords.length) {
+  if (!client.keywords || client.keywords.length === 0) {
     console.log(`Skipping client ${client.id}: no keywords configured.`);
     return;
   }
  
-  console.log(`Scanning for client ${client.id} with ${keywords.length} keywords...`);
+  console.log(`Scanning for client ${client.id} with ${client.keywords.length} keywords...`);
  
-  for (const keyword of keywords) {
+  for (const keyword of client.keywords) {
     try {
-      const posts = await searchRedditApify(keyword, client.city);
+      const posts = await searchRedditViaApify(keyword, client.city);
  
       for (const post of posts) {
-        const postData = {
-          id: post.post_id || post.id || Math.random().toString(36).substr(2, 9),
-          title: post.title || '',
-          selftext: post.body || post.selftext || post.text || '',
-          author: post.author || 'unknown',
-          subreddit: post.subreddit || 'unknown',
-          url: post.permalink ? `https://reddit.com${post.permalink}` : (post.url || ''),
-        };
- 
-        if (!postData.title) continue;
+        const postId = post.post_id || post.id;
+        if (!postId) continue;
  
         const { data: existing } = await supabase
           .from('leads')
           .select('id')
           .eq('client_id', client.id)
-          .eq('post_id', postData.id)
+          .eq('reddit_post_id', postId)
           .maybeSingle();
  
         if (existing) continue;
  
         const classification = await classifyPost(
-          postData.title,
-          postData.selftext,
-          keywords
+          post.title || '',
+          post.body || '',
+          client.keywords
         );
  
-        if (classification.audience_type === 'Noise' || classification.intent_score < 30) {
-          continue;
-        }
- 
-        const { data: newLead, error: insertError } = await supabase
+        const { error: insertError } = await supabase
           .from('leads')
           .insert({
             client_id: client.id,
-            post_id: postData.id,
-            post_title: postData.title,
-            post_content: postData.selftext?.substring(0, 2000) || '',
-            author: postData.author,
-            subreddit: postData.subreddit,
-            url: postData.url,
+            reddit_post_id: postId,
+            reddit_author: post.author,
+            subreddit: post.subreddit,
+            post_title: post.title,
+            post_text: (post.body || '').substring(0, 5000),
+            post_url: post.permalink
+              ? `https://reddit.com${post.permalink}`
+              : `https://reddit.com`,
+            audience_type: classification.audience_type,
             intent_score: classification.intent_score,
-            category: classification.audience_type,
-            status: 'new',
-            source: 'reddit',
-            contact_info: {
-              urgency: classification.urgency,
-              matched_keyword: keyword,
-              reasoning: classification.reasoning,
-            },
-          })
-          .select()
-          .single();
+            urgency: classification.urgency,
+            matched_keyword: keyword,
+          });
  
         if (insertError) {
-          if (!insertError.message?.includes('duplicate') && insertError.code !== '23505') {
+          if (!insertError.message.includes('duplicate')) {
             console.error('Error inserting lead:', insertError.message);
           }
           continue;
         }
  
-        console.log(`New lead: "${postData.title?.slice(0, 60)}" (score: ${classification.intent_score})`);
- 
-        if (
-          classification.audience_type !== 'Noise' &&
-          classification.intent_score >= (client.auto_dm_threshold || 70) &&
-          client.auto_dm_enabled &&
-          newLead
-        ) {
-          await sendAutoDM(client, newLead);
-        }
+        console.log(`New lead: "${post.title}" (score: ${classification.intent_score})`);
       }
- 
-    } catch (err) {
-      console.error(`Error scanning keyword "${keyword}": ${err.message}`);
+    } catch (error) {
+      console.error(`Error scanning keyword "${keyword}":`, error.message);
     }
-  }
-}
- 
-async function runScan() {
-  try {
-    console.log('Running scheduled scan...');
-    const { data: clients, error } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('is_active', true);
- 
-    if (error) {
-      console.error('Error fetching clients for scan:', error.message);
-      return;
-    }
- 
-    if (!clients?.length) {
-      console.log('No active clients to scan for.');
-      return;
-    }
- 
-    for (const client of clients) {
-      await scanForClient(client);
-    }
- 
-    console.log('Scan complete.');
-  } catch (err) {
-    console.error('Scanner error:', err.message);
   }
 }
  
@@ -173,17 +174,12 @@ async function scanNow(clientId) {
     .eq('id', clientId)
     .single();
  
-  if (error || !client) throw new Error('Client not found');
+  if (error || !client) {
+    throw new Error('Client not found');
+  }
  
   await scanForClient(client);
   return { message: 'Scan completed' };
 }
  
-function startScanner() {
-  console.log('Scanner service initialized. Scanning every 60 seconds.');
-  runScan();
-  setInterval(runScan, SCAN_INTERVAL);
-}
- 
 module.exports = { startScanner, scanForClient, scanNow };
- 
