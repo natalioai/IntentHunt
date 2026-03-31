@@ -7,6 +7,7 @@ const APIFY_TOKEN = process.env.APIFY_TOKEN || 'apify_api_dcvgMZzi1AfrP3GSaaWoas
  
 async function searchRedditApify(keyword, city) {
   const searchQuery = city ? `${keyword} ${city}` : keyword;
+  const encoded = encodeURIComponent(searchQuery);
   console.log(`Searching Reddit via Apify for: "${searchQuery}"`);
  
   try {
@@ -16,14 +17,13 @@ async function searchRedditApify(keyword, city) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          searches: [searchQuery],
-          maxItems: 20,
-          sort: 'new',
-          time: 'week',
-          searchPosts: true,
-          searchComments: false,
-          searchCommunities: false,
-          searchUsers: false,
+          startUrls: [`https://www.reddit.com/search/?q=${encoded}&sort=new&t=week`],
+          sortOrder: 'new',
+          maxPosts: 20,
+          maxComments: 0,
+          timeFilter: 'week',
+          requestDelay: 1,
+          proxyConfiguration: { useApifyProxy: true }
         }),
       }
     );
@@ -60,7 +60,6 @@ async function scanForClient(client) {
       const posts = await searchRedditApify(keyword, client.city);
  
       for (const post of posts) {
-        // Use exact field names from Apify output
         const postData = {
           id: post.post_id || post.id || Math.random().toString(36).substr(2, 9),
           title: post.title || '',
@@ -187,4 +186,3 @@ function startScanner() {
 }
  
 module.exports = { startScanner, scanForClient, scanNow };
- 
