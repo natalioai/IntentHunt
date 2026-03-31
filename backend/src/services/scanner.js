@@ -11,7 +11,7 @@ async function searchRedditApify(keyword, city) {
  
   try {
     const runResponse = await fetch(
-      `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=60`,
+      `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=120`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -30,13 +30,14 @@ async function searchRedditApify(keyword, city) {
  
     if (!runResponse.ok) {
       const errText = await runResponse.text();
-      console.error(`Apify run failed: ${runResponse.status} - ${errText.slice(0, 200)}`);
+      console.error(`Apify run failed: ${runResponse.status} - ${errText.slice(0, 300)}`);
       return [];
     }
  
     const results = await runResponse.json();
-    console.log(`Apify returned ${results.length} posts for "${searchQuery}"`);
-    return Array.isArray(results) ? results : [];
+    const posts = Array.isArray(results) ? results : [];
+    console.log(`Apify returned ${posts.length} posts for "${searchQuery}"`);
+    return posts;
  
   } catch (err) {
     console.error(`Apify search error: ${err.message}`);
@@ -59,13 +60,14 @@ async function scanForClient(client) {
       const posts = await searchRedditApify(keyword, client.city);
  
       for (const post of posts) {
+        // Use exact field names from Apify output
         const postData = {
-          id: post.id || post.postId || post.dataId || Math.random().toString(36).substr(2, 9),
-          title: post.title || post.postTitle || '',
-          selftext: post.text || post.body || post.selftext || post.description || '',
-          author: post.username || post.author || post.authorName || 'unknown',
-          subreddit: post.community || post.subreddit || post.subredditName || 'unknown',
-          url: post.url || post.postUrl || post.link || '',
+          id: post.post_id || post.id || Math.random().toString(36).substr(2, 9),
+          title: post.title || '',
+          selftext: post.body || post.selftext || post.text || '',
+          author: post.author || 'unknown',
+          subreddit: post.subreddit || 'unknown',
+          url: post.permalink ? `https://reddit.com${post.permalink}` : (post.url || ''),
         };
  
         if (!postData.title) continue;
@@ -185,3 +187,4 @@ function startScanner() {
 }
  
 module.exports = { startScanner, scanForClient, scanNow };
+ 
