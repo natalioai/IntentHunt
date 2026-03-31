@@ -3,52 +3,78 @@ const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
  
 const SCAN_INTERVAL = 60 * 1000;
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyAV0GQEr-1NiamufetX_rPlgcPeKC9Xj0c';
-const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID || 'e470347a4c47b46be';
+const APIFY_TOKEN = process.env.APIFY_TOKEN || 'apify_api_dcvgMZzi1AfrP3GSaaWoaslS2IytIs3Iugzc';
  
-async function searchRedditViaGoogle(keyword, city) {
+async function searchRedditApify(keyword, city) {
   const searchQuery = city ? `${keyword} ${city}` : keyword;
-  const encoded = encodeURIComponent(searchQuery);
-  const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${encoded}&num=10&sort=date`;
+  console.log(`Searching Reddit via Apify for: "${searchQuery}"`);
  
   try {
-    console.log(`Searching Google for Reddit posts: "${searchQuery}"`);
-    const response = await fetch(url);
+    // Start the Apify actor run
+    const runResponse = await fetch(
+      `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/runs?token=${APIFY_TOKEN}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          searchQuery: searchQuery,
+          maxItems: 25,
+          sort: 'new',
+          time: 'week',
+        }),
+      }
+    );
  
-    if (!response.ok) {
-      const err = await response.text();
-      console.error(`Google Search API error for "${keyword}": ${response.status} - ${err}`);
+    if (!runResponse.ok) {
+      console.error(`Apify run failed: ${runResponse.status}`);
       return [];
     }
  
-    const data = await response.json();
-    const items = data?.items || [];
-    console.log(`Found ${items.length} Reddit posts for "${keyword}"`);
+    const runData = await runResponse.json();
+    const runId = runData?.data?.id;
+    if (!runId) {
+      console.error('No run ID returned from Apify');
+      return [];
+    }
  
-    // Convert Google results to Reddit-like post format
-    return items
-      .filter(item => item.link.includes('reddit.com/r/'))
-      .map(item => {
-        // Extract post ID from Reddit URL
-        const match = item.link.match(/comments\/([a-z0-9]+)\//);
-        const postId = match ? match[1] : item.cacheId || Math.random().toString(36).substr(2, 9);
-        
-        // Extract subreddit from URL
-        const subredditMatch = item.link.match(/reddit\.com\/r\/([^/]+)/);
-        const subreddit = subredditMatch ? subredditMatch[1] : 'unknown';
+    console.log(`Apify run started: ${runId}`);
  
-        return {
-          id: postId,
-          title: item.title?.replace(' : ' + subreddit, '').replace(` - ${subreddit}`, '') || '',
-          selftext: item.snippet || '',
-          author: 'reddit_user',
-          subreddit: subreddit,
-          permalink: item.link.replace('https://www.reddit.com', ''),
-          url: item.link,
-        };
-      });
+    // Wait for run to complete (poll every 3 seconds, max 60 seconds)
+    let status = 'RUNNING';
+    let attempts = 0;
+    while (status === 'RUNNING' && attempts < 20) {
+      await new Promise(r => setTimeout(r, 3000));
+      const statusResponse = await fetch(
+        `https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`
+      );
+      const statusData = await statusResponse.json();
+      status = statusData?.data?.status;
+      attempts++;
+      console.log(`Apify run status: ${status} (attempt ${attempts})`);
+    }
+ 
+    if (status !== 'SUCCEEDED') {
+      console.error(`Apify run did not succeed: ${status}`);
+      return [];
+    }
+ 
+    // Get results
+    const datasetId = runData?.data?.defaultDatasetId;
+    const resultsResponse = await fetch(
+      `https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}`
+    );
+ 
+    if (!resultsResponse.ok) {
+      console.error(`Failed to fetch Apify results: ${resultsResponse.status}`);
+      return [];
+    }
+ 
+    const results = await resultsResponse.json();
+    console.log(`Apify returned ${results.length} posts for "${searchQuery}"`);
+    return results;
+ 
   } catch (err) {
-    console.error(`Google search error for "${keyword}": ${err.message}`);
+    console.error(`Apify search error: ${err.message}`);
     return [];
   }
 }
@@ -61,14 +87,25 @@ async function scanForClient(client) {
     return;
   }
  
-  console.log(`Scanning for client ${client.id} with keywords: ${keywords.join(', ')}`);
+  console.log(`Scanning for client ${client.id} with ${keywords.length} keywords...`);
  
   for (const keyword of keywords) {
     try {
-      const posts = await searchRedditViaGoogle(keyword, client.city);
+      const posts = await searchRedditApify(keyword, client.city);
  
-      for (const postData of posts) {
-        // Check if lead already exists
+      for (const post of posts) {
+        // Normalize Apify result fields
+        const postData = {
+          id: post.id || post.postId || Math.random().toString(36).substr(2, 9),
+          title: post.title || post.postTitle || '',
+          selftext: post.text || post.body || post.selftext || '',
+          author: post.username || post.author || 'unknown',
+          subreddit: post.community || post.subreddit || 'unknown',
+          url: post.url || post.postUrl || '',
+        };
+ 
+        if (!postData.title) continue;
+ 
         const { data: existing } = await supabase
           .from('leads')
           .select('id')
@@ -78,7 +115,6 @@ async function scanForClient(client) {
  
         if (existing) continue;
  
-        // Classify the post
         const classification = await classifyPost(
           postData.title,
           postData.selftext,
@@ -89,7 +125,6 @@ async function scanForClient(client) {
           continue;
         }
  
-        // Insert lead
         const { data: newLead, error: insertError } = await supabase
           .from('leads')
           .insert({
@@ -106,7 +141,7 @@ async function scanForClient(client) {
             source: 'reddit',
             contact_info: {
               urgency: classification.urgency,
-              matched_keyword: classification.matched_keyword,
+              matched_keyword: keyword,
               reasoning: classification.reasoning,
             },
           })
@@ -120,9 +155,8 @@ async function scanForClient(client) {
           continue;
         }
  
-        console.log(`✅ New lead: "${postData.title?.slice(0, 60)}" (score: ${classification.intent_score}, type: ${classification.audience_type})`);
+        console.log(`New lead: "${postData.title?.slice(0, 60)}" (score: ${classification.intent_score})`);
  
-        // Auto-DM if enabled
         if (
           classification.audience_type !== 'Noise' &&
           classification.intent_score >= (client.auto_dm_threshold || 70) &&
@@ -132,9 +166,6 @@ async function scanForClient(client) {
           await sendAutoDM(client, newLead);
         }
       }
- 
-      // Rate limit between keywords
-      await new Promise(r => setTimeout(r, 1000));
  
     } catch (err) {
       console.error(`Error scanning keyword "${keyword}": ${err.message}`);
