@@ -4,20 +4,20 @@ const { sendAutoDM } = require('./messenger');
  
 const SCAN_INTERVAL = 60 * 1000;
 const APIFY_TOKEN = process.env.APIFY_TOKEN || 'apify_api_dcvgMZzi1AfrP3GSaaWoaslS2IytIs3Iugzc';
+const APIFY_TASK_ID = 'definable_option~intenthunt-scanner';
  
 async function searchRedditApify(keyword, city) {
   const searchQuery = city ? `${keyword} ${city}` : keyword;
-  const encoded = encodeURIComponent(searchQuery);
   console.log(`Searching Reddit via Apify for: "${searchQuery}"`);
  
   try {
     const runResponse = await fetch(
-      `https://api.apify.com/v2/acts/scraper-engine~reddit-posts-search-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=120`,
+      `https://api.apify.com/v2/actor-tasks/${APIFY_TASK_ID}/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=120`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          startUrls: [`https://www.reddit.com/search/?q=${encoded}&sort=new&t=week`],
+          startUrls: [searchQuery],
           sortOrder: 'new',
           maxPosts: 20,
           maxComments: 0,
@@ -30,7 +30,7 @@ async function searchRedditApify(keyword, city) {
  
     if (!runResponse.ok) {
       const errText = await runResponse.text();
-      console.error(`Apify run failed: ${runResponse.status} - ${errText.slice(0, 300)}`);
+      console.error(`Apify task failed: ${runResponse.status} - ${errText.slice(0, 300)}`);
       return [];
     }
  
@@ -186,3 +186,4 @@ function startScanner() {
 }
  
 module.exports = { startScanner, scanForClient, scanNow };
+ 
