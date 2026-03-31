@@ -9,7 +9,7 @@ async function classifyPost(title, text, keywords) {
     const keywordList = keywords.join(', ');
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6-20250627',
+      model: claude-3-5-sonnet-20241022,
       max_tokens: 256,
       system: 'You are a buying intent classifier. Analyze social media posts and determine if they express buying intent. Return JSON only.',
       messages: [
