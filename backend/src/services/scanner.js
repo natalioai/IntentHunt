@@ -2,7 +2,7 @@ const supabase = require('../db/supabase');
 const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
  
-const SCAN_INTERVAL = 60 * 1000;
+const SCAN_INTERVAL = 61 * 1000;
 const APIFY_TOKEN = process.env.APIFY_TOKEN || 'apify_api_dcvgMZzi1AfrP3GSaaWoaslS2IytIs3Iugzc';
  
 async function searchRedditApify(keyword, city) {
