@@ -3,29 +3,52 @@ const { classifyPost } = require('./classifier');
 const { sendAutoDM } = require('./messenger');
  
 const SCAN_INTERVAL = 60 * 1000;
-const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '884af8f64d4b45c28716ef4d13252c3d';
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyAV0GQEr-1NiamufetX_rPlgcPeKC9Xj0c';
+const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID || 'e470347a4c47b46be';
  
-async function searchReddit(keyword, city) {
+async function searchRedditViaGoogle(keyword, city) {
   const searchQuery = city ? `${keyword} ${city}` : keyword;
   const encoded = encodeURIComponent(searchQuery);
-  const redditUrl = `https://www.reddit.com/search.json?q=${encoded}&sort=new&limit=25&t=week`;
-  const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(redditUrl)}`;
+  const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${encoded}&num=10&sort=date`;
  
   try {
-    console.log(`Searching Reddit for: "${searchQuery}"`);
-    const response = await fetch(scraperUrl);
+    console.log(`Searching Google for Reddit posts: "${searchQuery}"`);
+    const response = await fetch(url);
  
     if (!response.ok) {
-      console.error(`ScraperAPI returned ${response.status} for "${keyword}"`);
+      const err = await response.text();
+      console.error(`Google Search API error for "${keyword}": ${response.status} - ${err}`);
       return [];
     }
  
     const data = await response.json();
-    const posts = data?.data?.children || [];
-    console.log(`Found ${posts.length} posts for "${keyword}"`);
-    return posts.map(p => p.data);
+    const items = data?.items || [];
+    console.log(`Found ${items.length} Reddit posts for "${keyword}"`);
+ 
+    // Convert Google results to Reddit-like post format
+    return items
+      .filter(item => item.link.includes('reddit.com/r/'))
+      .map(item => {
+        // Extract post ID from Reddit URL
+        const match = item.link.match(/comments\/([a-z0-9]+)\//);
+        const postId = match ? match[1] : item.cacheId || Math.random().toString(36).substr(2, 9);
+        
+        // Extract subreddit from URL
+        const subredditMatch = item.link.match(/reddit\.com\/r\/([^/]+)/);
+        const subreddit = subredditMatch ? subredditMatch[1] : 'unknown';
+ 
+        return {
+          id: postId,
+          title: item.title?.replace(' : ' + subreddit, '').replace(` - ${subreddit}`, '') || '',
+          selftext: item.snippet || '',
+          author: 'reddit_user',
+          subreddit: subreddit,
+          permalink: item.link.replace('https://www.reddit.com', ''),
+          url: item.link,
+        };
+      });
   } catch (err) {
-    console.error(`Search error for "${keyword}": ${err.message}`);
+    console.error(`Google search error for "${keyword}": ${err.message}`);
     return [];
   }
 }
@@ -42,9 +65,10 @@ async function scanForClient(client) {
  
   for (const keyword of keywords) {
     try {
-      const posts = await searchReddit(keyword, client.city);
+      const posts = await searchRedditViaGoogle(keyword, client.city);
  
       for (const postData of posts) {
+        // Check if lead already exists
         const { data: existing } = await supabase
           .from('leads')
           .select('id')
@@ -54,6 +78,7 @@ async function scanForClient(client) {
  
         if (existing) continue;
  
+        // Classify the post
         const classification = await classifyPost(
           postData.title,
           postData.selftext,
@@ -64,6 +89,7 @@ async function scanForClient(client) {
           continue;
         }
  
+        // Insert lead
         const { data: newLead, error: insertError } = await supabase
           .from('leads')
           .insert({
@@ -73,7 +99,7 @@ async function scanForClient(client) {
             post_content: postData.selftext?.substring(0, 2000) || '',
             author: postData.author,
             subreddit: postData.subreddit,
-            url: `https://reddit.com${postData.permalink}`,
+            url: postData.url,
             intent_score: classification.intent_score,
             category: classification.audience_type,
             status: 'new',
@@ -94,8 +120,9 @@ async function scanForClient(client) {
           continue;
         }
  
-        console.log(`New lead: "${postData.title?.slice(0, 60)}" (score: ${classification.intent_score}, type: ${classification.audience_type})`);
+        console.log(`✅ New lead: "${postData.title?.slice(0, 60)}" (score: ${classification.intent_score}, type: ${classification.audience_type})`);
  
+        // Auto-DM if enabled
         if (
           classification.audience_type !== 'Noise' &&
           classification.intent_score >= (client.auto_dm_threshold || 70) &&
@@ -106,7 +133,8 @@ async function scanForClient(client) {
         }
       }
  
-      await new Promise(r => setTimeout(r, 2000));
+      // Rate limit between keywords
+      await new Promise(r => setTimeout(r, 1000));
  
     } catch (err) {
       console.error(`Error scanning keyword "${keyword}": ${err.message}`);
